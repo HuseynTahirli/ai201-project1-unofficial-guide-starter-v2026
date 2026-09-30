@@ -96,8 +96,45 @@ def split_documents(documents: list[Document]) -> list[Chunk]:
       - Is the useful information in one sentence, or spread over a paragraph?
       - Would splitting on paragraph breaks keep more thoughts intact than
         splitting on a character count?
+
+    Strategy: split each document on paragraph breaks (blank lines), then
+    merge consecutive paragraphs into one chunk until adding the next one
+    would push it past MAX_CHARS. When a document does need more than one
+    chunk, each new chunk starts with the last OVERLAP characters of the
+    previous one. A single paragraph longer than MAX_CHARS is kept whole
+    rather than cut mid-thought.
     """
-    return fallback_split(documents)
+    MAX_CHARS = 600
+    OVERLAP = 50
+
+    chunks: list[Chunk] = []
+    for doc in documents:
+        paragraphs = [p.strip() for p in doc.text.split("\n\n") if p.strip()]
+
+        pieces: list[str] = []
+        current = ""
+        for para in paragraphs:
+            candidate = f"{current}\n\n{para}" if current else para
+            if current and len(candidate) > MAX_CHARS:
+                pieces.append(current)
+                tail = current[-OVERLAP:].strip()
+                current = f"{tail}\n\n{para}"
+            else:
+                current = candidate
+        if current:
+            pieces.append(current)
+
+        for index, piece in enumerate(pieces):
+            chunks.append(
+                Chunk(
+                    text=piece,
+                    source=doc.source,
+                    index=index,
+                    produced_by="chunker.py::split_documents",
+                )
+            )
+
+    return chunks
 
 
 def describe(chunks: list[Chunk]) -> str:
