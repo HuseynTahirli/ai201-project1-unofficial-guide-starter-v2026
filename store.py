@@ -15,9 +15,17 @@ rest of the project if they were wrong:
    `sentence-transformers`. It is the same model — `all-MiniLM-L6-v2`, 384
    dimensions — but it arrives as an ONNX build from Chroma's own CDN, so the
    install needs neither PyTorch nor a reachable Hugging Face. See `_embedder`.
+
+4. `search` is hybrid. It runs the embedding search and a BM25 keyword search
+   on the same question and merges the two rankings with reciprocal rank
+   fusion. Fusion decides the *order*; every result still carries its real
+   cosine distance, so the relevance gate and its 0.6-style cutoff mean
+   exactly what they meant before. A chunk that only BM25 found gets its
+   distance computed from its stored embedding.
 """
 
 import os
+import re
 import shutil
 from dataclasses import dataclass
 
@@ -28,6 +36,8 @@ from dataclasses import dataclass
 os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 import chromadb  # noqa: E402
+import numpy as np  # noqa: E402
+from rank_bm25 import BM25Okapi  # noqa: E402
 
 import config
 from chunker import Chunk
@@ -42,9 +52,17 @@ class Result:
     label: str
     distance: float   # LOWER IS BETTER. 0.3 is close, 0.9 is unrelated.
     produced_by: str
+    score: float = 0.0  # fused rank score, HIGHER IS BETTER. Orders results only.
 
 
 _model = None
+
+# Hybrid search. Each retriever contributes its best CANDIDATE_POOL chunks (or
+# 4 x top_k, if that's bigger), and reciprocal rank fusion scores a chunk as
+# the sum of 1 / (RRF_K + rank) over the rankings it appears in. 60 is the
+# value from the original RRF paper and the usual default.
+CANDIDATE_POOL = 20
+RRF_K = 60
 
 # The model Chroma bundles. Anything else in config.EMBEDDING_MODEL means
 # "fetch that one from Hugging Face instead" — see `_embedder`.
@@ -178,6 +196,17 @@ def build_index(
     return len(chunks)
 
 
+def _tokenize(text: str) -> list[str]:
+    """Lowercased word tokens for BM25."""
+    return re.findall(r"\w+", text.lower())
+
+
+def _cosine_distance(a, b) -> float:
+    a = np.asarray(a, dtype=float)
+    b = np.asarray(b, dtype=float)
+    return float(1.0 - a.dot(b) / (np.linalg.norm(a) * np.linalg.norm(b)))
+
+
 def search(
     question: str,
     top_k: int | None = None,
@@ -185,9 +214,12 @@ def search(
     variant: str = "default",
 ) -> list[Result]:
     """
-    Retrieve the chunks closest in meaning to a question.
+    Retrieve the chunks that best match a question, by meaning and by keyword.
 
-    Returns them nearest-first, each with its distance.
+    Runs the embedding search and BM25 over the same collection, fuses the two
+    rankings with reciprocal rank fusion, and returns the top_k best-fused
+    first. Each result keeps its cosine distance to the question, which is
+    what the relevance gate checks.
     """
     top_k = top_k or config.TOP_K
     name = config.collection_name(corpus, variant)
@@ -199,22 +231,61 @@ def search(
             f"No index called '{name}'. Run `python app.py index` first."
         ) from exc
 
-    raw = collection.query(
-        query_embeddings=embed([question]),
-        n_results=min(top_k, collection.count()),
+    total = collection.count()
+    if total == 0:
+        return []
+    pool = min(max(CANDIDATE_POOL, top_k * 4), total)
+
+    # Semantic ranking.
+    query_vector = embed([question])
+    raw = collection.query(query_embeddings=query_vector, n_results=pool)
+    semantic_ids = raw["ids"][0]
+    distances = dict(zip(semantic_ids, raw["distances"][0]))
+
+    # Keyword ranking. BM25 needs the whole collection to compute term rarity.
+    everything = collection.get(include=["documents", "metadatas"])
+    all_ids = everything["ids"]
+    by_id = {
+        cid: (text, meta)
+        for cid, text, meta in zip(
+            all_ids, everything["documents"], everything["metadatas"]
+        )
+    }
+    bm25 = BM25Okapi([_tokenize(text) for text in everything["documents"]])
+    keyword_scores = bm25.get_scores(_tokenize(question))
+    keyword_order = sorted(
+        range(len(all_ids)), key=lambda i: keyword_scores[i], reverse=True
     )
+    # A score of 0 or less means no query term matched usefully; that is not
+    # a keyword hit, so it doesn't get a rank.
+    keyword_ids = [all_ids[i] for i in keyword_order[:pool] if keyword_scores[i] > 0]
+
+    # Reciprocal rank fusion.
+    fused: dict[str, float] = {}
+    for ranking in (semantic_ids, keyword_ids):
+        for rank, cid in enumerate(ranking, start=1):
+            fused[cid] = fused.get(cid, 0.0) + 1.0 / (RRF_K + rank)
+    top_ids = sorted(fused, key=fused.get, reverse=True)[:top_k]
+
+    # Chunks only BM25 found have no distance yet; compute it from the stored
+    # embedding so every result carries a real cosine distance for the gate.
+    missing = [cid for cid in top_ids if cid not in distances]
+    if missing:
+        stored = collection.get(ids=missing, include=["embeddings"])
+        for cid, vector in zip(stored["ids"], stored["embeddings"]):
+            distances[cid] = _cosine_distance(query_vector[0], vector)
 
     results: list[Result] = []
-    for text, meta, distance in zip(
-        raw["documents"][0], raw["metadatas"][0], raw["distances"][0]
-    ):
+    for cid in top_ids:
+        text, meta = by_id[cid]
         results.append(
             Result(
                 text=text,
                 source=str(meta.get("source", "unknown")),
                 label=f"{meta.get('source', 'unknown')}#{meta.get('index', 0)}",
-                distance=float(distance),
+                distance=float(distances[cid]),
                 produced_by=str(meta.get("produced_by", "unknown")),
+                score=fused[cid],
             )
         )
     return results
