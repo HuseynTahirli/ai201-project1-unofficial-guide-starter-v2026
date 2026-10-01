@@ -222,21 +222,66 @@ If I had to tighten one, it'd be #1 (retrieved chunk contains the answer). I'd b
 ## The Improvement
 
 **What I changed:**
+Added hybrid search to store.py. Retrieval used to be purely semantic
+(Chroma embeddings). Now it also runs BM25 keyword search over the same
+chunks and combines the two rankings using reciprocal rank fusion. The gate
+still checks the real cosine distance of whatever chunk comes back, so the
+0.6 cutoff from Unit 1 still means what it meant before.
 
 **Why I picked it:**
+My diagnosis in Unit 1 pointed at harder questions needing exact terms,
+numbers, names, that pure semantic search can gloss over. My test questions
+already pass 5/5, so this wasn't fixing a failure, it was testing whether
+keyword matching would actually help or just add noise to a system that
+already works fine on clean, single-topic questions.
 
 ### Run Log — After
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1. Retrieved chunk contains the answer | 4 of 5 |  |  |  |  |
-| 2. Every answer names a source | 5 of 5 |  |  |  |  |
-| 3. Gate stops out-of-corpus questions | 4 of 5 |  |  |  |  |
-| 4. | | | | | |
-| 5. | | | | | |
+| 1. Retrieved chunk contains the answer | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 2. Every answer names a source | 5 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 3. Gate stops out-of-corpus questions | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 4. Chunks stand on their own | 4 of 5 | 5/5 | — | — | MET |
+| 5. Answers cite the correct file | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+
+Produced by run_eval.py::main, full output in results/run_2026-09-30_2023_after.md.
 
 **Did it help?**
+No, not really. Every criterion landed at the exact same 5/5 as before, so
+hybrid search didn't move the actual pass/fail numbers at all. Looking at
+the retrieved chunks though, it did add some noise, 3 of my 5 questions now
+pull in an unrelated chunk or two in the top 5, like a dining hall post
+showing up for the health centre question. The right chunk still ranked
+high enough that the final answer stayed correct, so it didn't cost me
+anything on this test, but it's not an improvement either. My corpus is
+small and every post covers one clean topic, so there isn't much room for
+keyword matching to actually add value, and BM25 catching a shared common
+word is enough to drag in something irrelevant. I'd expect hybrid search to
+actually pay off more on a bigger or messier corpus where exact terms carry
+more weight, something like city_guides or a corpus with specific product
+names or codes in it.
 
 ## What's Still Broken
 
+Honestly, nothing in my five criteria actually failed, before or after the
+improvement. The real gap is that my test questions never got hard enough
+to find a genuine failure. If I had more time I'd change criterion 1's
+target to 5 of 5 like I said in my diagnosis, then write 5 new test
+questions actually meant to stress the system, one where the answer spans
+two posts, one where two files cover similar topics so the system could
+cite the wrong one, and one with an exact number buried in a longer
+paragraph instead of stated plainly up front. Those are the cases I'd
+expect this thing to actually break on, and I just didn't get to test them
+this time around.
+
 ## What I'd Do Differently
+
+I'd write criterion 1 and criterion 5 as 5 of 5 instead of 4 of 5, since my
+system hit 5/5 on both every single run and a 4/5 target left room for a
+failure it never actually had. I'd also pick harder test questions from the
+start instead of ones with one obvious answer sitting in one file, since
+easy questions made it impossible to tell if my system was actually good or
+just never tested properly. Next time I'd build in at least one or two
+questions I genuinely expect to be hard, so the test has a real shot at
+catching something.
