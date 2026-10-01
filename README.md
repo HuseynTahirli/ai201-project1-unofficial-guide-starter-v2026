@@ -156,10 +156,24 @@ I ran my 5 test questions and the 5 OUT_OF_SCOPE questions through `python app.p
 | How do I write a for loop in Rust? | No | 0.896 |
 
 ## How I Used AI
-
 **1.**
 
+I had Claude Code write the chunker from scratch. Split on paragraphs, cap
+at 600 characters, add a 50-char overlap if something actually splits, and
+leave the old function in but unused. It got it right first try. Since every
+post in my corpus is under 600 chars, nothing actually changed output wise,
+still 88 docs and 88 chunks, but now that's on purpose instead of a fluke of
+the starter's 800-char default.
+
 **2.**
+
+Claude Code wrote my five test questions by reading through files and
+pulling out one checkable fact each. One of the expects phrases it gave me
+was just "W" which basically any answer would match by accident, so it
+wasn't actually testing anything. I told it to fix that one and double check
+all five phrases actually show up word for word in their source files. It
+tightened the bad one to "W on your transcript" and confirmed the rest were
+already fine.
 
 ---
 
