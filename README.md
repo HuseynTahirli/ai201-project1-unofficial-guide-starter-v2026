@@ -183,23 +183,41 @@ already fine.
 
 | Criterion | Target | Run 1 | Run 2 | Run 3 | Verdict |
 |---|---|---|---|---|---|
-| 1. Retrieved chunk contains the answer | 4 of 5 |  |  |  |  |
-| 2. Every answer names a source | 5 of 5 |  |  |  |  |
-| 3. Gate stops out-of-corpus questions | 4 of 5 |  |  |  |  |
-| 4. | | | | | |
-| 5. | | | | | |
+| 1. Retrieved chunk contains the answer | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 2. Every answer names a source | 5 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 3. Gate stops out-of-corpus questions | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+| 4. Chunks stand on their own | 4 of 5 | 5/5 | — | — | MET |
+| 5. Answers cite the correct file | 4 of 5 | 5/5 | 5/5 | 5/5 | MET |
+
+Produced by run_eval.py::main, full output in results/run_2026-09-30_2013_before.md. Criterion 4 isn't re-run here since it's a static check on the 5 chunks sampled back in Milestone 3, chunking doesn't change between eval runs.
+
+Real output, "through which week can you drop a course, and what shows up on your transcript if you drop after week two?", run 1:
+
+You can drop a course through the end of week six. If you drop a course after week two, it shows as a W on your transcript.
+
+Source: admin_add_drop_deadline.txt
+
+
+Real output, "which floor of the library has outlets at every seat?", run 1:
+
+The basement is the only floor that has outlets at every seat, according to study_library_hours.txt.
+
 
 ## Verdicts
 
 | # | Criterion | Verdict | How I decided |
 |---|---|---|---|
-| 1 |  |  |  |
-| 2 |  |  |  |
-| 3 |  |  |  |
-| 4 |  |  |  |
-| 5 |  |  |  |
+| 1 | Retrieved chunk contains the answer | MET | Ran all 5 questions 3 times. Every single run pulled back the chunk with the answer, 5/5 every time, well past the 4/5 bar I set. |
+| 2 | Every answer names a source | MET | All 15 answers (5 questions times 3 runs) named a source file. 5/5 every run. |
+| 3 | Gate stops out-of-corpus questions | MET | run_eval.py checks this in one pass since it's deterministic. All 5 OUT_OF_SCOPE questions got refused. |
+| 4 | Chunks stand on their own | MET | From Milestone 3, all 5 chunks I sampled read as complete thoughts on their own. |
+| 5 | Answers cite the correct file | MET | Went through every answer across all 3 runs and checked it against the actual source doc. All 15 cited the right file, no mix-ups. |
 
 ## Diagnoses
+
+I didn't miss anything. Every criterion hit 5/5 on every run, even though most of my targets only asked for 4/5. Honestly that's more a sign my targets were too easy than my system being great, my corpus is only 88 short posts and each one covers one clean topic, so my test questions all had an obvious answer sitting in exactly one file.
+
+If I had to tighten one, it'd be #1 (retrieved chunk contains the answer). I'd bump it from 4 of 5 to 5 of 5 since it's never actually missed once. That would also push me to write harder test questions next time, ones where the answer is split across two posts or two files talk about similar things, since that's probably where this system would actually start to struggle.
 
 ## The Improvement
 
